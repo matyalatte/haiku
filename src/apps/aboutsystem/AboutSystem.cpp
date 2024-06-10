@@ -8,6 +8,7 @@
  *		René Gollent
  *		John Scipione, jscipione@gmail.com
  *		Wim van der Meer <WPJvanderMeer@gmail.com>
+ *		Maytalatte <matyalatte@gmail.com>
  */
 
 
@@ -100,6 +101,15 @@ static int ignored_pages(system_info*);
 static int max_pages(system_info*);
 static int max_and_ignored_pages(system_info*);
 static int used_pages(system_info*);
+
+static const char *GetOSVersion();
+static const char *GetCPUCount(system_info*);
+static const char *GetCPUType();
+static const char *GetClockFrequency();
+static const char *GetRamSize(system_info*);
+static const char *GetRamUsage(system_info*);
+static const char *GetKernelBuildTime(system_info*);
+static const char *GetUptime();
 
 static const rgb_color kIdealHaikuGreen = { 42, 131, 36, 255 };
 static const rgb_color kIdealHaikuOrange = { 255, 69, 0, 255 };
@@ -249,11 +259,6 @@ private:
 
 			float			_BaseWidth();
 			float			_BaseHeight();
-
-			const char*		_GetOSVersion();
-			const char*		_GetRamSize(system_info*);
-			const char*		_GetRamUsage(system_info*);
-			const char*		_GetUptime();
 
 			float			_UptimeHeight();
 
@@ -543,15 +548,10 @@ SysInfoView::SysInfoView()
 
 	// OS Version
 	BStringView* osLabel = _CreateLabel("oslabel", B_TRANSLATE("Version:"));
-	fOSVersionView = _CreateSubtext("ostext", _GetOSVersion());
+	fOSVersionView = _CreateSubtext("ostext", GetOSVersion());
 
 	// CPU count
-	static BStringFormat format(B_TRANSLATE_COMMENT(
-		"{0, plural, one{Processor:} other{# Processors:}}",
-		"\"Processor:\" or \"2 Processors:\""));
-	BString processorLabel;
-	format.Format(processorLabel, sysInfo.cpu_count);
-	BStringView* cpuLabel = _CreateLabel("cpulabel", processorLabel.String());
+	BStringView* cpuLabel = _CreateLabel("cpulabel", GetCPUCount(&sysInfo));
 
 	// Memory
 	BStringView* memoryLabel = _CreateLabel("memlabel", B_TRANSLATE("Memory:"));
@@ -566,74 +566,19 @@ SysInfoView::SysInfoView()
 	BStringView* abiText = _CreateSubtext("abitext", B_HAIKU_ABI_NAME);
 
 	// CPU count, type and clock speed
-	uint32 topologyNodeCount = 0;
-	cpu_topology_node_info* topology = NULL;
-	get_cpu_topology_info(NULL, &topologyNodeCount);
-	if (topologyNodeCount != 0)
-		topology = new cpu_topology_node_info[topologyNodeCount];
-	get_cpu_topology_info(topology, &topologyNodeCount);
-
-	enum cpu_platform platform = B_CPU_UNKNOWN;
-	enum cpu_vendor cpuVendor = B_CPU_VENDOR_UNKNOWN;
-	uint32 cpuModel = 0;
-	for (uint32 i = 0; i < topologyNodeCount; i++) {
-		switch (topology[i].type) {
-			case B_TOPOLOGY_ROOT:
-				platform = topology[i].data.root.platform;
-				break;
-
-			case B_TOPOLOGY_PACKAGE:
-				cpuVendor = topology[i].data.package.vendor;
-				break;
-
-			case B_TOPOLOGY_CORE:
-				cpuModel = topology[i].data.core.model;
-				break;
-
-			default:
-				break;
-		}
-	}
-
-	delete[] topology;
-
-	BString cpuType;
-	cpuType << get_cpu_vendor_string(cpuVendor) << " "
-		<< get_cpu_model_string(platform, cpuVendor, cpuModel);
-	BStringView* cpuText = _CreateSubtext("cputext", cpuType.String());
-
-	BString clockSpeed;
-	int32 frequency = get_rounded_cpu_speed();
-	if (frequency < 1000)
-		clockSpeed.SetToFormat(B_TRANSLATE("%ld MHz"), frequency);
-	else
-		clockSpeed.SetToFormat(B_TRANSLATE("%.2f GHz"), frequency / 1000.0f);
-
-	BStringView* frequencyText = _CreateSubtext("frequencytext", clockSpeed);
+	BStringView* cpuText = _CreateSubtext("cputext", GetCPUType());
+	BStringView* frequencyText = _CreateSubtext("frequencytext", GetClockFrequency());
 
 	// Memory size and usage
-	fMemSizeView = _CreateSubtext("ramsizetext", _GetRamSize(&sysInfo));
-	fMemUsageView = _CreateSubtext("ramusagetext", _GetRamUsage(&sysInfo));
+	fMemSizeView = _CreateSubtext("ramsizetext", GetRamSize(&sysInfo));
+	fMemUsageView = _CreateSubtext("ramusagetext", GetRamUsage(&sysInfo));
 
 	// Kernel build time/date
-	BString kernelTimeDate;
-	kernelTimeDate << sysInfo.kernel_build_date << " "
-		<< sysInfo.kernel_build_time;
-	BString buildTimeDate;
-
-	time_t buildTimeDateStamp = parsedate(kernelTimeDate, -1);
-	if (buildTimeDateStamp > 0) {
-		if (BDateTimeFormat().Format(buildTimeDate, buildTimeDateStamp,
-			B_LONG_DATE_FORMAT, B_MEDIUM_TIME_FORMAT) != B_OK)
-			buildTimeDate.SetTo(kernelTimeDate);
-	} else
-		buildTimeDate.SetTo(kernelTimeDate);
-
-	BStringView* kernelText = _CreateSubtext("kerneltext", buildTimeDate.String());
+	BStringView* kernelText = _CreateSubtext("kerneltext", GetKernelBuildTime(&sysInfo));
 
 	// Uptime
 	fUptimeView = new BTextView("uptimetext");
-	fUptimeView->SetText(_GetUptime());
+	fUptimeView->SetText(GetUptime());
 	_UpdateText(fUptimeView);
 
 	/* layout */
@@ -713,7 +658,7 @@ SysInfoView::SysInfoView(BMessage* archive)
 	}
 
 	// This might have changed after an update/reboot cycle;
-	fOSVersionView->SetText(_GetOSVersion());
+	fOSVersionView->SetText(GetOSVersion());
 
 	fDragger = dynamic_cast<BDragger*>(ChildAt(0));
 }
@@ -882,8 +827,8 @@ SysInfoView::Pulse()
 	system_info sysInfo;
 	get_system_info(&sysInfo);
 
-	fMemUsageView->SetText(_GetRamUsage(&sysInfo));
-	fUptimeView->SetText(_GetUptime());
+	fMemUsageView->SetText(GetRamUsage(&sysInfo));
+	fUptimeView->SetText(GetUptime());
 
 	float newHeight = fCachedBaseHeight + _UptimeHeight();
 	float difference = newHeight - fCachedMinHeight;
@@ -1094,8 +1039,8 @@ SysInfoView::_BaseHeight()
 }
 
 
-const char*
-SysInfoView::_GetOSVersion()
+static const char*
+GetOSVersion()
 {
 	BString osVersion;
 
@@ -1127,39 +1072,125 @@ SysInfoView::_GetOSVersion()
 }
 
 
-const char*
-SysInfoView::_GetRamSize(system_info* sysInfo)
+static const char*
+GetCPUCount(system_info* sysInfo) {
+	static BStringFormat format(B_TRANSLATE_COMMENT(
+		"{0, plural, one{Processor:} other{# Processors:}}",
+		"\"Processor:\" or \"2 Processors:\""));
+	BString processorLabel;
+	format.Format(processorLabel, sysInfo->cpu_count);
+	return processorLabel.String();
+}
+
+
+static const char*
+GetCPUType() {
+	uint32 topologyNodeCount = 0;
+	cpu_topology_node_info* topology = NULL;
+	get_cpu_topology_info(NULL, &topologyNodeCount);
+	if (topologyNodeCount != 0)
+		topology = new cpu_topology_node_info[topologyNodeCount];
+	get_cpu_topology_info(topology, &topologyNodeCount);
+
+	enum cpu_platform platform = B_CPU_UNKNOWN;
+	enum cpu_vendor cpuVendor = B_CPU_VENDOR_UNKNOWN;
+	uint32 cpuModel = 0;
+	for (uint32 i = 0; i < topologyNodeCount; i++) {
+		switch (topology[i].type) {
+			case B_TOPOLOGY_ROOT:
+				platform = topology[i].data.root.platform;
+				break;
+
+			case B_TOPOLOGY_PACKAGE:
+				cpuVendor = topology[i].data.package.vendor;
+				break;
+
+			case B_TOPOLOGY_CORE:
+				cpuModel = topology[i].data.core.model;
+				break;
+
+			default:
+				break;
+		}
+	}
+
+	delete[] topology;
+
+	BString cpuType;
+	cpuType << get_cpu_vendor_string(cpuVendor) << " "
+		<< get_cpu_model_string(platform, cpuVendor, cpuModel);
+
+	return cpuType.String();
+}
+
+
+static const char*
+GetClockFrequency() {
+	BString clockSpeed;
+	int32 frequency = get_rounded_cpu_speed();
+	if (frequency < 1000)
+		clockSpeed.SetToFormat(B_TRANSLATE("%ld MHz"), frequency);
+	else
+		clockSpeed.SetToFormat(B_TRANSLATE("%.2f GHz"), frequency / 1000.0f);
+	return clockSpeed.String();
+}
+
+
+static const char*
+GetRamSize(system_info* sysInfo)
 {
+	BString ramSize;
 	int inaccessibleMemory = ignored_pages(sysInfo);
 
 	if (inaccessibleMemory <= 0)
-		fText.SetToFormat(B_TRANSLATE("%d MiB total"), max_pages(sysInfo));
+		ramSize.SetToFormat(B_TRANSLATE("%d MiB total"), max_pages(sysInfo));
 	else {
 		BString temp;
-		fText = B_TRANSLATE("%total MiB total, %inaccessible MiB inaccessible");
+		ramSize = B_TRANSLATE("%total MiB total, %inaccessible MiB inaccessible");
 		temp << max_and_ignored_pages(sysInfo);
-		fText.ReplaceFirst("%total", temp);
+		ramSize.ReplaceFirst("%total", temp);
 		temp.SetTo("");
 		temp << inaccessibleMemory;
-		fText.ReplaceFirst("%inaccessible", temp);
+		ramSize.ReplaceFirst("%inaccessible", temp);
 	}
 
-	return fText.String();
+	return ramSize.String();
 }
 
 
-const char*
-SysInfoView::_GetRamUsage(system_info* sysInfo)
+static const char*
+GetRamUsage(system_info* sysInfo)
 {
-	fText.SetToFormat(B_TRANSLATE("%d MiB used (%d%%)"), used_pages(sysInfo),
+	BString ramUsage;
+	ramUsage.SetToFormat(B_TRANSLATE("%d MiB used (%d%%)"), used_pages(sysInfo),
 		(int)(100 * sysInfo->used_pages / sysInfo->max_pages));
 
-	return fText.String();
+	return ramUsage.String();
 }
 
 
-const char*
-SysInfoView::_GetUptime()
+static const char*
+GetKernelBuildTime(system_info* sysInfo)
+{
+	BString kernelTimeDate;
+	kernelTimeDate << sysInfo->kernel_build_date << " "
+		<< sysInfo->kernel_build_time;
+	BString buildTimeDate;
+
+	time_t buildTimeDateStamp = parsedate(kernelTimeDate, -1);
+	if (buildTimeDateStamp > 0) {
+		if (BDateTimeFormat().Format(buildTimeDate, buildTimeDateStamp,
+			B_LONG_DATE_FORMAT, B_MEDIUM_TIME_FORMAT) != B_OK)
+			buildTimeDate.SetTo(kernelTimeDate);
+	} else
+		buildTimeDate.SetTo(kernelTimeDate);
+
+	return buildTimeDate.String();
+}
+
+
+static const char*
+GetUptime()
 {
 	BDurationFormat formatter;
 	BString uptimeText;
@@ -2213,14 +2244,149 @@ used_pages(system_info* sysInfo)
 }
 
 
+static const char* const kUsage =
+	"usage: AboutSystem [OPTION]\n"
+	"Shows the system information.\n"
+	"\n"
+	"        -h, --help              this usage message\n"
+	"        -a, --all               all information\n"
+	"        -k, --kernel            kernel build time/date\n"
+	"        -m, --memory            memory size and usage\n"
+	"        -p, --processor         processor\n"
+	"        -t, --time              uptime\n"
+	"        -v, --version           the version of OS\n"
+;
+
+
+void
+usage_and_exit(bool error)
+{
+	printf(kUsage);
+	exit(error ? 1 : 0);
+}
+
+
 //	#pragma mark - main
 
 
 int
-main()
+main(int argc, char **argv)
 {
-	AboutApp app;
-	app.Run();
+	if (argc <= 1) {
+		// launch GUI app
+		AboutApp app;
+		app.Run();
+		return 0;
+	}
+
+	// parse arguments
+	bool printKernel = false;
+	bool printMemory = false;
+	bool printProcessor = false;
+	bool printTime = false;
+	bool printVersion = false;
+
+	for (int i = 1; i < argc; ++i) {
+		if (argv[i][0] != '-') {
+			// not option
+			fprintf(stderr, "%s: Invalid argument '%s'\n", argv[0], argv[i]);
+			usage_and_exit(1);
+		}
+
+		char *ptr = argv[i];
+		++ptr;
+
+		if (*ptr == '-') {
+			// read long options (e.g. --help)
+			++ptr;
+
+			if (strcmp(ptr, "help") == 0)
+				usage_and_exit(0);
+			else if (strcmp(ptr, "all") == 0) {
+				printKernel = true;
+				printMemory = true;
+				printProcessor = true;
+				printTime = true;
+				printVersion = true;
+			} else if (strcmp(ptr, "kernel") == 0)
+				printKernel = true;
+			else if (strcmp(ptr, "memory") == 0)
+				printMemory = true;
+			else if (strcmp(ptr, "processor") == 0)
+				printProcessor = true;
+			else if (strcmp(ptr, "time") == 0)
+				printTime = true;
+			else if (strcmp(ptr, "version") == 0)
+				printVersion = true;
+			else {
+				fprintf(stderr, "%s: Invalid option '%s'\n", argv[0], argv[i]);
+				usage_and_exit(1);
+			}
+		} else {
+			// read short options (e.g. -h)
+			while (*ptr != '\0') {
+				if (*ptr == 'h')
+					usage_and_exit(0);
+				else if (*ptr == 'a') {
+					printKernel = true;
+					printMemory = true;
+					printProcessor = true;
+					printTime = true;
+					printVersion = true;
+				} else if (*ptr == 'k')
+					printKernel = true;
+				else if (*ptr == 'm')
+					printMemory = true;
+				else if (*ptr == 'p')
+					printProcessor = true;
+				else if (*ptr == 't')
+					printTime = true;
+				else if (*ptr == 'v')
+					printVersion = true;
+				else {
+					printTime = true;
+					fprintf(stderr, "%s: Invalid option '%c'\n", argv[0], *ptr);
+					usage_and_exit(1);
+				}
+				++ptr;
+			}
+		}
+	}
+
+	// print system info
+	system_info sysInfo;
+	if (printProcessor || printMemory || printKernel) {
+		get_system_info(&sysInfo);
+	}
+
+	if (printVersion) {
+		// os version
+		printf("%s %s\n", GetOSVersion(), B_HAIKU_ABI_NAME);
+	}
+
+	if (printProcessor) {
+		// os version
+		printf("%s\n", GetCPUType());
+		printf("%s\n", GetClockFrequency());
+		BString cpucount = GetCPUCount(&sysInfo);
+		printf("%s\n", cpucount.IReplaceAll(":", "").String());
+	}
+
+	if (printMemory) {
+		// memory
+		printf("%s\n", GetRamSize(&sysInfo));
+		printf("%s\n", GetRamUsage(&sysInfo));
+	}
+
+	if (printKernel) {
+		// kernel
+		printf("%s\n", GetKernelBuildTime(&sysInfo));
+	}
+
+	if (printTime) {
+		// uptime
+		printf("%s\n", GetUptime());
+	}
 
 	return 0;
 }
